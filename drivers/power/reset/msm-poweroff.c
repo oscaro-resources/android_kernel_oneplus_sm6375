@@ -517,6 +517,11 @@ static void msm_restart_prepare(const char *cmd)
 		} else {
 			reason = PON_RESTART_REASON_NORMAL;
 			__raw_writel(0x77665501, restart_reason);
+#ifdef OPLUS_FEATUREB_BOOT
+			if (cmd[0] == '\0' || !strncmp(cmd, "userrequested", 13) ||
+			    !strcmp(cmd, "shell") || !strcmp(cmd, "from_fastboot"))
+				reason = PON_RESTART_REASON_NORMAL;
+#endif
 		}
 #else
 		else {
