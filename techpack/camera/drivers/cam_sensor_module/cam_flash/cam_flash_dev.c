@@ -15,6 +15,111 @@
 extern struct cam_flash_settings flash_ftm_data;
 #endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 
+int cam_torch_brightness_level = -1;
+EXPORT_SYMBOL_GPL(cam_torch_brightness_level);
+
+static ssize_t torch_brightness_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct platform_device *pdev = to_platform_device(dev);
+	struct cam_flash_ctrl *fctrl = platform_get_drvdata(pdev);
+	struct cam_sensor_i2c_reg_array reg_array[2];
+	struct cam_sensor_i2c_reg_setting setting;
+	int value;
+	int rc = 0;
+
+	if (kstrtoint(buf, 0, &value))
+		return -EINVAL;
+	value = clamp(value, -1, 127);
+	cam_torch_brightness_level = value;
+
+	CAM_INFO(CAM_FLASH, "torch_brightness=%d state=%d powered=%d",
+		value, fctrl ? fctrl->flash_state : -1,
+		fctrl ? fctrl->is_regulator_enabled : 0);
+
+	/* -1 only changes the value used by the next torch transaction. */
+	if (!fctrl || value < 0)
+		return count;
+
+	memset(reg_array, 0, sizeof(reg_array));
+	reg_array[0].reg_addr = 0x05;
+	reg_array[0].reg_data = value & 0x7f;
+	reg_array[1].reg_addr = 0x06;
+	reg_array[1].reg_data = value & 0x7f;
+	memset(&setting, 0, sizeof(setting));
+	setting.reg_setting = reg_array;
+	setting.size = 2;
+	setting.addr_type = CAMERA_SENSOR_I2C_TYPE_BYTE;
+	setting.data_type = CAMERA_SENSOR_I2C_TYPE_BYTE;
+
+	mutex_lock(&fctrl->flash_mutex);
+	if (!fctrl->is_regulator_enabled && fctrl->flash_state == CAM_FLASH_STATE_INIT) {
+		CAM_WARN(CAM_FLASH, "torch_brightness ignored while flash is powered off");
+		mutex_unlock(&fctrl->flash_mutex);
+		return count;
+	}
+
+	if (fctrl->io_master_info.master_type == CCI_MASTER) {
+		if (!fctrl->io_master_info.cci_client) {
+			CAM_ERR(CAM_FLASH, "torch_brightness has no CCI client");
+			rc = -ENODEV;
+			goto unlock_flash;
+		}
+
+		fctrl->io_master_info.cci_client->cci_device = fctrl->cci_num;
+		fctrl->io_master_info.cci_client->cci_i2c_master = fctrl->cci_i2c_master;
+		fctrl->io_master_info.cci_client->i2c_freq_mode = I2C_STANDARD_MODE;
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+		fctrl->io_master_info.cci_client->sid = (flash_ftm_data.valid_setting_index >= 0 &&
+			flash_ftm_data.valid_setting_index < flash_ftm_data.total_flash_dev) ?
+			flash_ftm_data.flash_ftm_settings[flash_ftm_data.valid_setting_index].cci_client.sid : 0x63;
+#else
+		fctrl->io_master_info.cci_client->sid = 0x63;
+#endif
+		fctrl->io_master_info.cci_client->retries = 3;
+		fctrl->io_master_info.cci_client->id_map = 0;
+
+		if (!fctrl->io_master_info.cci_client->cci_subdev) {
+			rc = camera_io_init(&fctrl->io_master_info);
+			if (rc) {
+				CAM_ERR(CAM_FLASH, "torch_brightness CCI init failed rc=%d", rc);
+				goto unlock_flash;
+			}
+		}
+	} else if (fctrl->io_master_info.master_type == I2C_MASTER) {
+		if (!fctrl->io_master_info.client) {
+			CAM_ERR(CAM_FLASH, "torch_brightness has no I2C client");
+			rc = -ENODEV;
+			goto unlock_flash;
+		}
+#ifdef OPLUS_FEATURE_CAMERA_COMMON
+		fctrl->io_master_info.client->addr = (flash_ftm_data.valid_setting_index >= 0 &&
+			flash_ftm_data.valid_setting_index < flash_ftm_data.total_flash_dev) ?
+			flash_ftm_data.flash_ftm_settings[flash_ftm_data.valid_setting_index].flashprobeinfo.slave_write_address : 0xc6;
+#else
+		fctrl->io_master_info.client->addr = 0xc6;
+#endif
+	}
+
+	rc = camera_io_dev_write(&fctrl->io_master_info, &setting);
+unlock_flash:
+	mutex_unlock(&fctrl->flash_mutex);
+	if (rc)
+		CAM_ERR(CAM_FLASH, "torch_brightness I2C write failed rc=%d", rc);
+	else
+		CAM_INFO(CAM_FLASH, "torch_brightness write complete value=%d", value);
+
+	return rc ? rc : count;
+}
+
+static ssize_t torch_brightness_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "%d\n", cam_torch_brightness_level);
+}
+
+static DEVICE_ATTR_RW(torch_brightness);
+
 static int32_t cam_flash_driver_cmd(struct cam_flash_ctrl *fctrl,
 		void *arg, struct cam_flash_private_soc *soc_private)
 {
@@ -568,6 +673,10 @@ static int cam_flash_component_bind(struct device *dev,
 	fctrl->flash_state = CAM_FLASH_STATE_INIT;
 	CAM_DBG(CAM_FLASH, "Component bound successfully");
 
+	rc = device_create_file(&pdev->dev, &dev_attr_torch_brightness);
+	if (rc)
+		CAM_ERR(CAM_FLASH, "Failed to create torch_brightness rc=%d", rc);
+
 #ifdef OPLUS_FEATURE_CAMERA_COMMON
 	rc = oplus_cam_flash_proc_init(fctrl, pdev);
 #endif
@@ -603,6 +712,7 @@ static void cam_flash_component_unbind(struct device *dev,
 	mutex_lock(&fctrl->flash_mutex);
 	cam_flash_shutdown(fctrl);
 	mutex_unlock(&fctrl->flash_mutex);
+	device_remove_file(&pdev->dev, &dev_attr_torch_brightness);
 	cam_unregister_subdev(&(fctrl->v4l2_dev_str));
 	cam_flash_put_source_node_data(fctrl);
 	platform_set_drvdata(pdev, NULL);
