@@ -54,6 +54,9 @@
 
 struct cam_flash_ctrl;
 
+extern int cam_torch_brightness_level;
+void cam_flash_override_torch_brightness(struct cam_sensor_i2c_reg_setting *setting);
+
 enum cam_flash_switch_trigger_ops {
 	LED_SWITCH_OFF = 0,
 	LED_SWITCH_ON,

@@ -201,6 +201,7 @@ static int cam_ftm_i2c_torch_on(struct cam_flash_ctrl *flash_ctrl, struct cam_fl
 		write_setting.data_type = init_setting->data_type;
 		write_setting.size = init_setting->size;
 		write_setting.delay = init_setting->delay;
+		cam_flash_override_torch_brightness(&write_setting);
 		rc = camera_io_dev_write(&(flash_ctrl->io_master_info), &write_setting);
 		if (rc < 0) {
 			CAM_ERR(CAM_FLASH, "FTM Failed to write flash init setting");
@@ -215,6 +216,7 @@ static int cam_ftm_i2c_torch_on(struct cam_flash_ctrl *flash_ctrl, struct cam_fl
 		write_setting.data_type = torch_on_setting->data_type;
 		write_setting.size = torch_on_setting->size;
 		write_setting.delay = torch_on_setting->delay;
+		cam_flash_override_torch_brightness(&write_setting);
 		rc = camera_io_dev_write(&(flash_ctrl->io_master_info), &write_setting);
 		if (rc < 0) {
 			CAM_ERR(CAM_FLASH, "FTM Failed to write flash init setting");
@@ -293,6 +295,7 @@ static int cam_ftm_i2c_flash_on(struct cam_flash_ctrl *flash_ctrl, struct cam_fl
 		write_setting.data_type = init_setting->data_type;
 		write_setting.size = init_setting->size;
 		write_setting.delay = init_setting->delay;
+		cam_flash_override_torch_brightness(&write_setting);
 		rc = camera_io_dev_write(&(flash_ctrl->io_master_info), &write_setting);
 		if (rc < 0) {
 			CAM_ERR(CAM_FLASH, "FTM write init setting Failed rc = %d", rc);
@@ -748,6 +751,12 @@ int oplus_cam_flash_proc_init(struct cam_flash_ctrl *flash_ctl,
 				}
 			}
 		}
+	}
+
+	if (flash_ftm_data.valid_setting_index < 0) {
+		CAM_WARN(CAM_FLASH, "cam_flash_match_id failed, defaulting valid_setting_index to 0 (%s)",
+			flash_ftm_data.flash_ftm_settings[0].flashprobeinfo.flash_name);
+		flash_ftm_data.valid_setting_index = 0;
 	}
 	return rc;
 }

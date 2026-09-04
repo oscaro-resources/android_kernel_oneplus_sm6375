@@ -21,8 +21,27 @@
 #include "oplus_cam_flash_dev.h"
 #endif /*OPLUS_FEATURE_CAMERA_COMMON*/
 
+
 static uint default_on_timer = 2;
 module_param(default_on_timer, uint, 0644);
+
+void cam_flash_override_torch_brightness(struct cam_sensor_i2c_reg_setting *setting)
+{
+	uint32_t i;
+
+	if (!setting || !setting->reg_setting || cam_torch_brightness_level < 0)
+		return;
+
+	for (i = 0; i < setting->size; i++) {
+		/* Oscar's AW36515 / OCP81373 uses register 0x05 (LED1) and 0x06 (LED2) for torch current. */
+		if (setting->reg_setting[i].reg_addr == 0x05 ||
+			setting->reg_setting[i].reg_addr == 0x06)
+			setting->reg_setting[i].reg_data =
+				(uint16_t)(cam_torch_brightness_level & 0x7f);
+	}
+}
+EXPORT_SYMBOL_GPL(cam_flash_override_torch_brightness);
+
 
 int cam_flash_led_prepare(struct led_trigger *trigger, int options,
 	int *max_current, bool is_wled)
@@ -312,6 +331,7 @@ int cam_flash_i2c_flush_request(struct cam_flash_ctrl *fctrl,
 	int i = 0;
 	uint32_t cancel_req_id_found = 0;
 	struct i2c_settings_array *i2c_set = NULL;
+	struct i2c_settings_list *i2c_list = NULL;
 
 	if (!fctrl) {
 		CAM_ERR(CAM_FLASH, "Device data is NULL");
@@ -332,6 +352,15 @@ int cam_flash_i2c_flush_request(struct cam_flash_ctrl *fctrl,
 				continue;
 
 			if (i2c_set->is_settings_valid == 1) {
+				list_for_each_entry(i2c_list,
+					&(i2c_set->list_head), list) {
+					cam_flash_override_torch_brightness(&i2c_list->i2c_settings);
+					rc = cam_sensor_util_i2c_apply_setting(
+						&(fctrl->io_master_info), i2c_list);
+					if (rc)
+						CAM_ERR(CAM_FLASH,
+							"Failed to apply flush settings: %d", rc);
+				}
 				rc = delete_request(i2c_set);
 				if (rc < 0)
 					CAM_ERR(CAM_FLASH,
@@ -739,9 +768,6 @@ int cam_flash_i2c_apply_setting(struct cam_flash_ctrl *fctrl,
 	struct i2c_settings_list *i2c_list;
 	struct i2c_settings_array *i2c_set = NULL;
 	int frame_offset = 0, rc = 0;
-#ifdef OPLUS_FEATURE_CAMERA_COMMON
-	uint32_t data = 0;
-#endif
 	CAM_DBG(CAM_FLASH, "req_id=%llu", req_id);
 	if (req_id == 0) {
 		/* NonRealTime Init settings*/
@@ -751,6 +777,7 @@ int cam_flash_i2c_apply_setting(struct cam_flash_ctrl *fctrl,
 			list_for_each_entry(i2c_list,
 				&(i2c_set->list_head),
 				list) {
+				cam_flash_override_torch_brightness(&i2c_list->i2c_settings);
 				rc = cam_sensor_util_i2c_apply_setting
 					(&(fctrl->io_master_info), i2c_list);
 				if (rc) {
@@ -764,6 +791,7 @@ int cam_flash_i2c_apply_setting(struct cam_flash_ctrl *fctrl,
 			list_for_each_entry(i2c_list,
 				&(fctrl->i2c_data.init_settings.list_head),
 				list) {
+				cam_flash_override_torch_brightness(&i2c_list->i2c_settings);
 				rc = cam_sensor_util_i2c_apply_setting
 					(&(fctrl->io_master_info), i2c_list);
 				if ((rc == -EAGAIN) &&
@@ -772,8 +800,9 @@ int cam_flash_i2c_apply_setting(struct cam_flash_ctrl *fctrl,
 					CAM_WARN(CAM_FLASH,
 						"CCI HW is in reset mode: Reapplying Init settings");
 					usleep_range(1000, 1010);
+					cam_flash_override_torch_brightness(&i2c_list->i2c_settings);
 					rc = cam_sensor_util_i2c_apply_setting
-					(&(fctrl->io_master_info), i2c_list);
+						(&(fctrl->io_master_info), i2c_list);
 				}
 
 				if (rc) {
@@ -789,6 +818,7 @@ int cam_flash_i2c_apply_setting(struct cam_flash_ctrl *fctrl,
 			list_for_each_entry(i2c_list,
 				&(fctrl->i2c_data.config_settings.list_head),
 				list) {
+				cam_flash_override_torch_brightness(&i2c_list->i2c_settings);
 				rc = cam_sensor_util_i2c_apply_setting
 					(&(fctrl->io_master_info), i2c_list);
 				if (rc) {
@@ -804,16 +834,9 @@ int cam_flash_i2c_apply_setting(struct cam_flash_ctrl *fctrl,
 		i2c_set = &fctrl->i2c_data.per_frame[frame_offset];
 		if ((i2c_set->is_settings_valid == true) &&
 			(i2c_set->request_id == req_id)) {
-#ifdef OPLUS_FEATURE_CAMERA_COMMON
-		if(!strcmp(fctrl->flash_name, "i2c_flash")) {
-			rc = camera_io_dev_read(&(fctrl->io_master_info),
-				0x0A, &data, 1, 1);
-			rc = camera_io_dev_read(&(fctrl->io_master_info),
-				0x0B, &data, 1, 1);
-		}
-#endif
 			list_for_each_entry(i2c_list,
 				&(i2c_set->list_head), list) {
+				cam_flash_override_torch_brightness(&i2c_list->i2c_settings);
 				rc = cam_sensor_util_i2c_apply_setting(
 					&(fctrl->io_master_info), i2c_list);
 				if (rc) {
