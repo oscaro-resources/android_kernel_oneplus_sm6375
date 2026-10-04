@@ -155,7 +155,7 @@ KERNEL_SRC="${PWD}"
 # AnyKernel3 configuration
 ANYKERNEL_DIR="${PWD}/AnyKernel3"
 KERNEL_NAME="CosmosKernel"
-KERNEL_VERSION="1.3"
+KERNEL_VERSION="1.4"
 DEVICE_CODENAME="oscaro"
 
 # -----------------
